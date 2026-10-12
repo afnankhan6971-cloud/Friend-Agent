@@ -1,0 +1,9 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Build outputs & logs
+dist/
+*.log

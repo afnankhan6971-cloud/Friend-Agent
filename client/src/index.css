@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import "./components/dotmatrix-loader.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --app-bg: #D6FFCB;
+  --app-fg: #042F32;
+  --app-primary: #042F32;
+  --app-primary-fg: #D6FFCB;
+  --app-secondary: #E8FFE1;
+  --app-secondary-fg: #042F32;
+  --app-muted: #F0FFE9;
+  --app-muted-fg: #35605F;
+  --app-border: #B8E8AF;
+  --app-surface-1: #E8FFE1;
+  --app-surface-2: #F0FFE9;
+  --app-heading: #042F32;
+}
+
+.dark {
+  --app-bg: #071C1D;
+  --app-fg: #D6FFCB;
+  --app-primary: #D6FFCB;
+  --app-primary-fg: #042F32;
+  --app-secondary: #0D292A;
+  --app-secondary-fg: #D6FFCB;
+  --app-muted: #123536;
+  --app-muted-fg: #A8C9C1;
+  --app-border: #234849;
+  --app-surface-1: #0D292A;
+  --app-surface-2: #123536;
+  --app-heading: #D6FFCB;
+}
+
+@theme {
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-fg);
+  --color-primary: var(--app-primary);
+  --color-primary-foreground: var(--app-primary-fg);
+  --color-secondary: var(--app-secondary);
+  --color-secondary-foreground: var(--app-secondary-fg);
+  --color-muted: var(--app-muted);
+  --color-muted-foreground: var(--app-muted-fg);
+  --color-accent: var(--app-border);
+  --color-accent-foreground: var(--app-fg);
+  --color-border: var(--app-border);
+  --color-input: var(--app-border);
+  --color-ring: var(--app-primary);
+  --color-surface-1: var(--app-surface-1);
+  --color-surface-2: var(--app-surface-2);
+  --color-heading: var(--app-heading);
+  --color-dot-on: var(--app-primary);
+  --radius: 0.75rem;
+}
+
+@layer base {
+  *, ::before, ::after {
+    border-color: var(--color-border);
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 200ms;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "rlig" 1, "calt" 1;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}

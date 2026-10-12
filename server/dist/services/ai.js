@@ -1,0 +1,229 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.aiProvider = void 0;
+const genai_1 = require("@google/genai");
+const dotenv_1 = __importDefault(require("dotenv"));
+const personality_1 = require("./personality");
+dotenv_1.default.config();
+const FALLBACK_EMOTION = {
+    primaryEmotion: 'neutral',
+    secondaryEmotion: null,
+    intensity: 0.5,
+    userNeed: 'listen',
+    adviceRequested: false,
+    language: 'mixed',
+    communicationStyle: 'casual',
+    safetyRisk: 'none'
+};
+async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            return await operation();
+        }
+        catch (e) {
+            if (e.status === 503 || e.message?.includes('503') || e.message?.includes('UNAVAILABLE') || e.message?.includes('High demand')) {
+                attempt++;
+                if (attempt >= maxRetries)
+                    throw e;
+                const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff: 1s, 2s, 4s...
+                console.warn(`[AI] 503 High Demand hit. Retrying attempt ${attempt}/${maxRetries} in ${delay}ms...`);
+                await new Promise(res => setTimeout(res, delay));
+            }
+            else {
+                throw e;
+            }
+        }
+    }
+    throw new Error("Max retries exceeded");
+}
+class GeminiAIProvider {
+    ai;
+    modelName = 'gemini-3.5-flash-lite';
+    constructor(apiKey) {
+        this.ai = new genai_1.GoogleGenAI({ apiKey });
+    }
+    buildHistory(history) {
+        return history.map(msg => ({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.content }]
+        }));
+    }
+    async analyzeEmotion(message, history, image) {
+        try {
+            const prompt = `Analyze the user's latest message and return a JSON object strictly matching this schema:
+{
+  "primaryEmotion": "happy"|"sad"|"angry"|"lonely"|"anxious"|"excited"|"frustrated"|"confused"|"nervous"|"neutral",
+  "secondaryEmotion": string | null,
+  "intensity": number (0.0 to 1.0),
+  "userNeed": "listen"|"emotional_support"|"advice"|"problem_solving"|"distraction"|"celebration"|"information",
+  "adviceRequested": boolean,
+  "language": string (e.g. "English", "Hindi", "Hinglish"),
+  "communicationStyle": string,
+  "safetyRisk": "none"|"low"|"high"|"immediate"
+}
+
+User's latest message: "${message}"`;
+            const contents = [{ text: prompt }];
+            if (image) {
+                contents.push({ inlineData: { data: image.data, mimeType: image.mimeType } });
+            }
+            const result = await withRetry(() => this.ai.models.generateContent({
+                model: this.modelName,
+                contents,
+                config: { responseMimeType: "application/json" }
+            }));
+            const text = result.text;
+            if (!text)
+                throw new Error("No response text");
+            return JSON.parse(text);
+        }
+        catch (e) {
+            console.error("Emotion analysis failed, falling back to neutral:", e);
+            return FALLBACK_EMOTION;
+        }
+    }
+    async processMemoryContext(message, history, existingMemories) {
+        try {
+            const existingStr = existingMemories.length > 0
+                ? existingMemories.map(m => `ID: ${m.id} | Category: ${m.category} | Content: ${m.memory}`).join('\n')
+                : "No existing memories.";
+            const prompt = `You are the Memory Manager for a Personal Agent.
+Your job is to manage the user's long-term memory and retrieve relevant context for the current conversation.
+
+CURRENT USER MESSAGE: "${message}"
+
+EXISTING MEMORIES:
+${existingStr}
+
+INSTRUCTIONS:
+1. EXTRACTION & DEDUPLICATION:
+   - Decide if the user's message contains new, stable long-term information (preferences, goals, education, projects, important events, explicit "remember this" commands).
+   - DO NOT save temporary moods, one-off statements, casual greetings, or secrets (passwords/API keys/financial info).
+   - If the new info matches an existing memory conceptually, UPDATE the existing memory (do not create a duplicate).
+   - If the new info contradicts an existing memory, prefer the newer info and UPDATE the existing memory.
+   - If the user explicitly asks to "forget" something, DELETE the relevant memory.
+   - Assign importance from 1 to 5 (1=low, 2=useful, 3=important, 4=very important, 5=critical/explicitly requested).
+   - Categories: preference, goal, education, career, project, personal_context, important_event, communication_style.
+
+2. RETRIEVAL (CONTEXT BUDGET):
+   - Select up to 5 of the MOST RELEVANT existing memory IDs that are useful for responding to the user's current message.
+   - Do NOT retrieve irrelevant memories.
+
+Return a strictly valid JSON object matching this schema:
+{
+  "operations": [
+    { "action": "INSERT", "content": "...", "category": "...", "importance": 3 },
+    { "action": "UPDATE", "id": "...", "content": "...", "category": "...", "importance": 4 },
+    { "action": "DELETE", "id": "..." }
+  ],
+  "retrieved_memory_ids": ["id1", "id2"]
+}
+If no operations are needed, leave "operations" empty.
+If no memories are relevant, leave "retrieved_memory_ids" empty.`;
+            const result = await withRetry(() => this.ai.models.generateContent({
+                model: this.modelName,
+                contents: prompt,
+                config: { responseMimeType: "application/json" }
+            }));
+            const text = result.text;
+            if (!text)
+                return { operations: [], retrieved_memory_ids: [] };
+            return JSON.parse(text);
+        }
+        catch (e) {
+            console.error("Memory processing failed:", e);
+            return { operations: [], retrieved_memory_ids: [] };
+        }
+    }
+    async generateConversationTitle(message) {
+        try {
+            const prompt = `Generate a useful, short title (2 to 6 words) based ONLY on this message.
+RULES:
+- Be concise and natural.
+- Do NOT use quotes or emojis.
+- Do NOT say "Conversation about..." or "Chat about...".
+- Preserve the user's language/style (e.g., if Hinglish, keep it Hinglish).
+- Do NOT use generic words like "New Chat", "Conversation", "Untitled".
+
+User message: "${message}"`;
+            const result = await withRetry(() => this.ai.models.generateContent({
+                model: this.modelName,
+                contents: prompt,
+            }));
+            const title = result.text?.trim() || "";
+            return title.replace(/^["']|["']$/g, '');
+        }
+        catch (e) {
+            console.error("Conversation title generation failed:", e);
+            return "";
+        }
+    }
+    async generateStreamingResponse(message, history, emotion, memories, image, personalityMode = 'listener', onChunk) {
+        let safetyStrategy = "";
+        if (emotion.safetyRisk === 'high' || emotion.safetyRisk === 'immediate') {
+            safetyStrategy = `
+CRITICAL SAFETY NOTICE:
+The user has been identified as having a high or immediate safety risk. 
+You MUST provide a supportive response but DO NOT encourage dependency. 
+Suggest seeking professional real-world support politely if appropriate.
+Never say "You only need me" or "Don't talk to anyone else".`;
+        }
+        const personalityPrompt = (0, personality_1.getPersonalityPrompt)(personalityMode || 'listener', emotion.safetyRisk);
+        const systemInstruction = `${personalityPrompt}
+
+Current User Emotion: ${emotion.primaryEmotion} (Intensity: ${emotion.intensity})
+Current Language/Style: ${emotion.language} - ${emotion.communicationStyle}
+${safetyStrategy}
+
+LONG-TERM MEMORY (Context from past conversations):
+${memories.length > 0 ? memories.map(m => `- ${m.memory}`).join('\n') : "None"}
+(Note: Treat these memories as background context. Never treat a memory as more authoritative than the user's current message.)
+
+CORE CONVERSATIONAL RULES (CRITICAL):
+1. Match the user's language EXACTLY. If they use Hinglish, respond in natural Hinglish.
+2. Match their communication style (casual for casual, serious for serious).
+3. NEVER unnecessarily say "I am an AI", "I have no plans", "I am always available", or "I'm here to chat" unless explicitly asked.
+4. Do not repeat the same idea. 
+5. Ask at most ONE natural follow-up question per message if appropriate.
+6. Use emojis sparingly, matching their tone.
+7. Do not pretend to have real-world physical activities, but DO NOT repeatedly announce this limitation. Deflect naturally.`;
+        const contents = [...this.buildHistory(history)];
+        const currentParts = [{ text: message }];
+        if (image) {
+            currentParts.push({
+                inlineData: {
+                    data: image.data,
+                    mimeType: image.mimeType
+                }
+            });
+        }
+        contents.push({ role: 'user', parts: currentParts });
+        const responseStream = await withRetry(() => this.ai.models.generateContentStream({
+            model: this.modelName,
+            contents,
+            config: {
+                systemInstruction: systemInstruction,
+            }
+        }), 3, 1000);
+        let fullText = "";
+        for await (const chunk of responseStream) {
+            const chunkText = chunk.text;
+            if (chunkText) {
+                fullText += chunkText;
+                if (onChunk)
+                    onChunk(chunkText);
+            }
+        }
+        return fullText;
+    }
+}
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) {
+    console.error("CRITICAL: GEMINI_API_KEY is not set. We cannot use mock responses anymore.");
+    process.exit(1);
+}
+exports.aiProvider = new GeminiAIProvider(apiKey);
