@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { DotmTriangle2 } from '@/components/ui/dotm-triangle-2';
 import { Dotm3x3_1 } from '@/components/ui/dotm-3x3-1';
-import { Send, Image as ImageIcon, PlusCircle, LogOut, Menu, X, Search, Settings, Brain, XCircle, Edit2, Check, RotateCcw, Sparkles, AlertCircle } from 'lucide-react';
+import { Send, Image as ImageIcon, PlusCircle, LogOut, Menu, X, Search, Settings, Brain, XCircle, Edit2, Check, RotateCcw, Sparkles, AlertCircle, Smile } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from './contexts/AuthContext';
 import { Auth } from './components/Auth';
@@ -9,6 +9,7 @@ import { MemoryContext } from './components/MemoryContext';
 import { Settings as SettingsComponent } from './components/Settings';
 import { ImagePreview } from './components/ImagePreview';
 import { VoiceInput } from './components/VoiceInput';
+import { EmojiPicker } from './components/EmojiPicker';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 
 export interface ChatMessageItem {
@@ -70,6 +71,41 @@ export default function App() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const cursorPositionRef = useRef<number>(0);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+
+  const handleSelectEmoji = (emoji: string) => {
+    const textarea = textareaRef.current;
+    let pos: number;
+    if (textarea && typeof textarea.selectionStart === 'number') {
+      pos = textarea.selectionStart;
+    } else if (typeof cursorPositionRef.current === 'number') {
+      pos = cursorPositionRef.current;
+    } else {
+      pos = input.length;
+    }
+
+    if (pos < 0 || pos > input.length) {
+      pos = input.length;
+    }
+
+    const updatedText = input.slice(0, pos) + emoji + input.slice(pos);
+    setInput(updatedText);
+
+    const newPos = pos + emoji.length;
+    cursorPositionRef.current = newPos;
+
+    setEmojiPickerOpen(false);
+
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus({ preventScroll: true });
+        textareaRef.current.setSelectionRange(newPos, newPos);
+      }
+    });
+  };
 
   const getHeaders = (isFormData = false) => {
     const headers: any = {
@@ -767,7 +803,13 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="flex items-end gap-2 bg-surface-1 border border-border p-2 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/30 transition-all">
+            <div className="relative flex items-end gap-2 bg-surface-1 border border-border p-2 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/30 transition-all">
+              <EmojiPicker
+                isOpen={emojiPickerOpen}
+                onClose={() => setEmojiPickerOpen(false)}
+                onSelectEmoji={handleSelectEmoji}
+                triggerRef={emojiButtonRef}
+              />
               <input 
                 type="file" 
                 className="hidden" 
@@ -782,9 +824,47 @@ export default function App() {
               >
                 <ImageIcon size={22} />
               </button>
+              <button 
+                ref={emojiButtonRef}
+                type="button"
+                onMouseDown={(e) => {
+                  // Prevent textarea blur on desktop
+                  e.preventDefault();
+                }}
+                onClick={() => setEmojiPickerOpen(prev => !prev)}
+                className={`p-3 rounded-xl transition flex items-center justify-center shrink-0 ${
+                  emojiPickerOpen
+                    ? 'text-primary dark:text-foreground bg-surface-2'
+                    : 'text-muted-foreground hover:text-primary dark:hover:text-foreground hover:bg-surface-2'
+                }`}
+                title="Add emoji"
+                aria-label="Add emoji"
+                aria-expanded={emojiPickerOpen}
+              >
+                <Smile size={22} />
+              </button>
               <textarea
+                ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  cursorPositionRef.current = e.target.selectionStart;
+                }}
+                onSelect={(e) => {
+                  cursorPositionRef.current = e.currentTarget.selectionStart;
+                }}
+                onClick={(e) => {
+                  cursorPositionRef.current = e.currentTarget.selectionStart;
+                }}
+                onKeyUp={(e) => {
+                  cursorPositionRef.current = e.currentTarget.selectionStart;
+                }}
+                onTouchEnd={(e) => {
+                  cursorPositionRef.current = e.currentTarget.selectionStart;
+                }}
+                onBlur={(e) => {
+                  cursorPositionRef.current = e.currentTarget.selectionStart;
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();

@@ -162,7 +162,7 @@ User message: "${message}"`;
             return "";
         }
     }
-    async generateStreamingResponse(message, history, emotion, memories, image, personalityMode = 'listener', onChunk) {
+    async generateStreamingResponse(message, history, emotion, memories, image, personalityMode = 'listener', onChunk, capabilityContext) {
         let safetyStrategy = "";
         if (emotion.safetyRisk === 'high' || emotion.safetyRisk === 'immediate') {
             safetyStrategy = `
@@ -173,11 +173,50 @@ Suggest seeking professional real-world support politely if appropriate.
 Never say "You only need me" or "Don't talk to anyone else".`;
         }
         const personalityPrompt = (0, personality_1.getPersonalityPrompt)(personalityMode || 'listener', emotion.safetyRisk);
+        let capabilityGuidance = `
+ASSISTANT CAPABILITIES & TOOLS:
+- You are an AI Personal Agent equipped with conversational intelligence AND image creation/editing tools.
+- NEVER state "Main image generate nahi karta" or "I cannot generate images" as if you lack the feature entirely.`;
+        if (capabilityContext?.type === 'image_capability') {
+            if (capabilityContext.status === 'operational') {
+                capabilityGuidance += `
+CAPABILITY QUERY GUIDELINES:
+- The user is asking whether you can create or edit images.
+- CONFIRM enthusiastically that YES, you can create and edit images from text descriptions or photos.
+- Respond in 1 to 3 short sentences matching the user's language (e.g. natural Hinglish if they asked in Hinglish) and selected personality.
+- Invite them to describe what they want to create or share an image to edit.
+- DO NOT generate an image right now; simply answer their question.`;
+            }
+            else if (capabilityContext.status === 'unavailable_quota') {
+                capabilityGuidance += `
+CAPABILITY QUERY GUIDELINES:
+- The user is asking whether you can create or edit images.
+- Acknowledge that image creation/editing is indeed a built-in feature of yours, BUT explain honestly that it is currently temporarily unavailable/paused due to API quota limits (Google Gemini free-tier quota is limit: 0).
+- Reassure them that conversational chat is working completely fine.
+- Respond in 1 to 3 short sentences matching the user's language (e.g. natural Hinglish if they asked in Hinglish) and selected personality.
+- NEVER claim an image was created. Be honest, friendly, and natural.`;
+            }
+            else if (capabilityContext.status === 'not_configured') {
+                capabilityGuidance += `
+CAPABILITY QUERY GUIDELINES:
+- The user is asking whether you can create or edit images.
+- Explain briefly that image generation is supported but currently not configured yet (API key / provider not configured).
+- Respond in 1 to 2 short sentences matching the user's language and selected personality.`;
+            }
+            else {
+                capabilityGuidance += `
+CAPABILITY QUERY GUIDELINES:
+- The user is asking whether you can create or edit images.
+- Explain briefly that image generation is supported but is temporarily unavailable due to a service error.
+- Respond in 1 to 2 short sentences matching the user's language and selected personality.`;
+            }
+        }
         const systemInstruction = `${personalityPrompt}
 
 Current User Emotion: ${emotion.primaryEmotion} (Intensity: ${emotion.intensity})
 Current Language/Style: ${emotion.language} - ${emotion.communicationStyle}
 ${safetyStrategy}
+${capabilityGuidance}
 
 LONG-TERM MEMORY (Context from past conversations):
 ${memories.length > 0 ? memories.map(m => `- ${m.memory}`).join('\n') : "None"}
